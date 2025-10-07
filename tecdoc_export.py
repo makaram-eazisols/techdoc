@@ -76,7 +76,12 @@ class TecdocClient:
                 "includeAccessoryArticles": True,
                 "includePDFs": True,
                 "includeImages": True,
-                "includeLinks": True
+                "includeLinks": True,
+                "assemblyGroupFacetOptions": {
+                    "enabled": True,
+                    "assemblyGroupType": "O",
+                    "includeCompleteTree": True
+                }
             }
         }
         
@@ -304,6 +309,61 @@ class TecdocClient:
         
         return category_path, category_node_ids
     
+    def _build_category_hierarchy_from_facets(self, facets_data: Dict[str, Any]) -> tuple:
+        """Build category path and node IDs from assembly group facets"""
+        if not facets_data or 'counts' not in facets_data:
+            return '', ''
+        
+        counts = facets_data.get('counts', [])
+        if not counts:
+            return '', ''
+        
+        # Build a map of nodeId -> node data
+        node_map = {}
+        for node in counts:
+            node_id = node.get('assemblyGroupNodeId')
+            if node_id:
+                node_map[node_id] = node
+        
+        # Find the root node (one without parentNodeId)
+        root_node = None
+        for node in counts:
+            if 'parentNodeId' not in node or node.get('parentNodeId') is None:
+                root_node = node
+                break
+        
+        if not root_node:
+            # If no clear root found, just take the first node
+            return '', ''
+        
+        # Build the hierarchy from root to leaf
+        path_parts = []
+        node_ids = []
+        
+        # Add root
+        path_parts.append(root_node.get('assemblyGroupName', ''))
+        node_ids.append(str(root_node.get('assemblyGroupNodeId', '')))
+        
+        # Find children recursively
+        current_id = root_node.get('assemblyGroupNodeId')
+        while True:
+            child_found = False
+            for node in counts:
+                if node.get('parentNodeId') == current_id:
+                    path_parts.append(node.get('assemblyGroupName', ''))
+                    node_ids.append(str(node.get('assemblyGroupNodeId', '')))
+                    current_id = node.get('assemblyGroupNodeId')
+                    child_found = True
+                    break
+            
+            if not child_found:
+                break
+        
+        category_path = ' > '.join(path_parts) if path_parts else ''
+        category_node_ids = '|'.join(node_ids) if node_ids else ''
+        
+        return category_path, category_node_ids
+    
     def _extract_classification_data(self, class_data: Dict[str, Any]) -> tuple:
         """Extract classification data from API response"""
         generic_article_id = ''
@@ -355,7 +415,7 @@ class TecdocClient:
         
         return category_path, category_node_ids
     
-    def process_complete_article_data(self, article: Dict[str, Any], article_name: str, article_id: int, supplier_id: int) -> None:
+    def process_complete_article_data(self, article: Dict[str, Any], article_name: str, article_id: int, supplier_id: int, assembly_group_facets: Dict[str, Any] = None) -> None:
         """Process article data and populate articles CSV data structure"""
         if not article_id:
             print(f"   ERROR: No article ID found, skipping")
@@ -364,9 +424,9 @@ class TecdocClient:
         print(f"   Processing article ID: {article_id}")
         
         # Process articles.csv data only (focusing on articles.csv for now)
-        self.process_articles_data(article, article_name, article_id, supplier_id)
+        self.process_articles_data(article, article_name, article_id, supplier_id, assembly_group_facets)
     
-    def process_articles_data(self, article: Dict[str, Any], article_name: str, article_id: int, supplier_id: int) -> None:
+    def process_articles_data(self, article: Dict[str, Any], article_name: str, article_id: int, supplier_id: int, assembly_group_facets: Dict[str, Any] = None) -> None:
         """Process data for articles.csv with improved schema compliance"""
         print(f"   Processing article data for articles.csv...")
         
@@ -390,6 +450,18 @@ class TecdocClient:
             assembly_group_name = gen_article.get('assemblyGroupName', '')
             assembly_group_node_id = str(gen_article.get('assemblyGroupNodeId', ''))
             legacy_article_id = str(gen_article.get('legacyArticleId', ''))
+        
+        # Build category hierarchy from assembly group facets
+        category_path = ''
+        category_node_ids = ''
+        if assembly_group_facets:
+            category_path, category_node_ids = self._build_category_hierarchy_from_facets(assembly_group_facets)
+        
+        # Fallback to simple assembly group name if facets not available
+        if not category_path and assembly_group_name:
+            category_path = assembly_group_name
+        if not category_node_ids and assembly_group_node_id:
+            category_node_ids = assembly_group_node_id
         
         # Extract misc data fields
         is_accessory = 'false'
@@ -470,8 +542,8 @@ class TecdocClient:
             'article_number': article_number,  # Using articleNumber as article_number
             'generic_article_id': generic_article_id,  # Using genericArticleId
             'generic_article_description': generic_article_description,  # Using genericArticleDescription
-            'category_path': assembly_group_name,  # Using assemblyGroupName as category_path
-            'category_node_ids': assembly_group_node_id,  # Using assemblyGroupNodeId as category_node_ids
+            'category_path': category_path,  # Built from assemblyGroupFacets hierarchy
+            'category_node_ids': category_node_ids,  # Built from assemblyGroupFacets hierarchy
             'short_description': '',  # Missing field - set as empty
             'note': '',  # Missing field - set as empty
             'image_primary_url_50': image_primary_url_50,
@@ -905,6 +977,9 @@ def main():
     print(f"SUCCESS: Article name: {article_name}")
     print(f"SUCCESS: Article ID: {article_id}")
     
+    # Extract assembly group facets from response
+    assembly_group_facets = articles_response.get('assemblyGroupFacets', {})
+    
     # Step 3: Process articles with complete data extraction
     for i, article in enumerate(articles_data, 1):
         print(f"\nProcessing article {i}: {article.get('articleNumber', 'Unknown')}")
@@ -919,8 +994,8 @@ def main():
             if legacy_article_id:
                 article_id = legacy_article_id
         
-        # Process complete article data
-        client.process_complete_article_data(article, article_name, article_id, supplier_id)
+        # Process complete article data with assembly group facets
+        client.process_complete_article_data(article, article_name, article_id, supplier_id, assembly_group_facets)
         
         # Show key information
         print(f"   Name: {article_name}")

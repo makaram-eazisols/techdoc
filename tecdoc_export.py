@@ -486,46 +486,17 @@ class TecdocClient:
             has_mandatory_material_certification = str(misc_data.get('hasMandatoryMaterialCertification', False)).lower()
             is_remanufactured_part = str(misc_data.get('isRemanufacturedPart', False)).lower()
         
-        # Extract image URLs from images array
-        image_primary_url_50 = ''
-        image_primary_url_100 = ''
-        image_primary_url_200 = ''
-        image_primary_url_400 = ''
-        image_primary_url_800 = ''
+        # Extract 3200px images sorted by sortNumber
+        image_urls_3200 = []
         
         if 'images' in article and article['images']:
-            first_image = article['images'][0]  # Take first image as primary
-            image_primary_url_50 = first_image.get('imageURL50', '')
-            image_primary_url_100 = first_image.get('imageURL100', '')
-            image_primary_url_200 = first_image.get('imageURL200', '')
-            image_primary_url_400 = first_image.get('imageURL400', '')
-            image_primary_url_800 = first_image.get('imageURL800', '')
-        
-        # Extract image document data
-        image_doc_ids = []
-        image_doc_filenames = []
-        image_doc_types = []
-        image_gallery_urls = []
-        
-        if 'images' in article and article['images']:
-            for img in article['images']:
-                # Extract document IDs (using filename as ID)
-                if 'fileName' in img and img['fileName']:
-                    doc_id = img['fileName'].replace('.JPG', '').replace('.jpg', '').replace('.jpeg', '').replace('.png', '')
-                    image_doc_ids.append(doc_id)
-                
-                # Extract filenames
-                if 'fileName' in img and img['fileName']:
-                    image_doc_filenames.append(img['fileName'])
-                
-                # Extract document types
-                if 'typeDescription' in img and img['typeDescription']:
-                    image_doc_types.append(img['typeDescription'])
-                
-                # Extract gallery URLs (all image URLs except primary)
-                for key, url in img.items():
-                    if key.startswith('imageURL') and url and key not in ['imageURL50', 'imageURL100', 'imageURL200', 'imageURL400', 'imageURL800']:
-                        image_gallery_urls.append(url)
+            # Sort images by sortNumber
+            sorted_images = sorted(article['images'], key=lambda x: x.get('sortNumber', 999))
+            
+            # Extract only the 3200px URLs
+            for img in sorted_images:
+                if 'imageURL3200' in img and img['imageURL3200']:
+                    image_urls_3200.append(img['imageURL3200'])
         
         # Extract PDF URLs
         pdf_urls = []
@@ -534,10 +505,14 @@ class TecdocClient:
                 if 'url' in pdf and pdf['url']:
                     pdf_urls.append(pdf['url'])
         
+        # Extract mfrId
+        mfr_id = str(article.get('mfrId', ''))
+        
         # Create article row according to schema
         article_row = {
             'article_id': legacy_article_id,  # Using legacyArticleId as article_id
             'supplier_id': data_supplier_id,  # Using dataSupplierId as supplier_id
+            'mfr_id': mfr_id,  # Using mfrId
             'brand_name': mfr_name,  # Using mfrName as brand_name
             'article_number': article_number,  # Using articleNumber as article_number
             'generic_article_id': generic_article_id,  # Using genericArticleId
@@ -546,15 +521,7 @@ class TecdocClient:
             'category_node_ids': category_node_ids,  # Built from assemblyGroupFacets hierarchy
             'short_description': '',  # Missing field - set as empty
             'note': '',  # Missing field - set as empty
-            'image_primary_url_50': image_primary_url_50,
-            'image_primary_url_100': image_primary_url_100,
-            'image_primary_url_200': image_primary_url_200,
-            'image_primary_url_400': image_primary_url_400,
-            'image_primary_url_800': image_primary_url_800,
-            'image_doc_ids': '|'.join(image_doc_ids),
-            'image_doc_filenames': '|'.join(image_doc_filenames),
-            'image_doc_types': '|'.join(image_doc_types),
-            'image_gallery_urls': '|'.join(image_gallery_urls),
+            'image_urls': '|'.join(image_urls_3200),  # 3200px images sorted by sortNumber, pipe-delimited
             'pdf_urls': '|'.join(pdf_urls),
             'is_accessory': is_accessory,  # Using isAccessory from misc
             'article_status_id': article_status_id,
@@ -832,13 +799,10 @@ class TecdocClient:
         
         # Define articles CSV schema according to client requirements
         articles_columns = [
-            'article_id', 'supplier_id', 'brand_name', 'article_number',
+            'article_id', 'supplier_id', 'mfr_id', 'brand_name', 'article_number',
             'generic_article_id', 'generic_article_description', 'category_path',
             'category_node_ids', 'short_description', 'note',
-            'image_primary_url_50', 'image_primary_url_100', 'image_primary_url_200',
-            'image_primary_url_400', 'image_primary_url_800', 'image_doc_ids',
-            'image_doc_filenames', 'image_doc_types', 'image_gallery_urls',
-            'pdf_urls', 'is_accessory', 'article_status_id', 'article_status_description',
+            'image_urls', 'pdf_urls', 'is_accessory', 'article_status_id', 'article_status_description',
             'article_status_valid_from_date', 'quantity_per_package', 'quantity_per_part_per_package',
             'is_self_service_packing', 'has_mandatory_material_certification', 'is_remanufactured_part'
         ]

@@ -78,8 +78,12 @@ class TecdocClient:
                 "includeImages": True,
                 "includeLinks": True,
                 "includeArticleCriteria": True,
-                "includeAttributes": True,
-                "assemblies": True,
+                "includeOEMNumbers": True,
+                "includeComparableNumbers": True,
+                "includeTradeNumbers": True,
+                "includeReplacedByArticles": True,
+                "includeReplacesArticles": True,
+                "includeGTINs": True,
                 "assemblyGroupFacetOptions": {
                     "enabled": True,
                     "assemblyGroupType": "O",
@@ -178,49 +182,7 @@ class TecdocClient:
             print(f"   ERROR: API Error 400 - Bad Request")
             print(f"   Response: {response}")
         
-        return response
-    
-    def get_article_references(self, article_id: int) -> Dict[str, Any]:
-        """Get article references (OE numbers, etc.)"""
-        payload = {
-            "getArticleReferences": {
-                "articleCountry": DEFAULT_COUNTRY,
-                "articleId": article_id,
-                "lang": DEFAULT_LANGUAGE,
-                "provider": TECDOC_PROVIDER
-            }
-        }
-        
-        print(f"Getting references for article ID {article_id}...")
-        return self.make_request(payload)
-    
-    def get_article_components(self, article_id: int) -> Dict[str, Any]:
-        """Get article components/bill of materials"""
-        payload = {
-            "getArticleComponents": {
-                "articleCountry": DEFAULT_COUNTRY,
-                "articleId": article_id,
-                "lang": DEFAULT_LANGUAGE,
-                "provider": TECDOC_PROVIDER
-            }
-        }
-        
-        print(f"Getting components for article ID {article_id}...")
-        return self.make_request(payload)
-    
-    def get_article_relations(self, article_id: int) -> Dict[str, Any]:
-        """Get article-to-article relations"""
-        payload = {
-            "getArticleRelations": {
-                "articleCountry": DEFAULT_COUNTRY,
-                "articleId": article_id,
-                "lang": DEFAULT_LANGUAGE,
-                "provider": TECDOC_PROVIDER
-            }
-        }
-        
-        print(f"Getting article relations for article ID {article_id}...")
-        return self.make_request(payload)
+        return response 
     
     def get_brand_info(self, supplier_id: int) -> Dict[str, Any]:
         """Get brand information"""
@@ -419,6 +381,10 @@ class TecdocClient:
         if 'articleCriteria' in article or 'attributes' in article or 'criteria' in article:
             print(f"   Found attributes in article data, processing...")
             self.extract_attributes_from_article(article_id, article)
+        
+        # Check if references are included in the article data
+        if any(key in article for key in ['oemNumbers', 'tradeNumbers', 'comparableNumbers', 'replacedByArticles', 'replacesArticles', 'GTINs']):
+            self.extract_references_from_article(article_id, article)
     
     def process_articles_data(self, article: Dict[str, Any], article_name: str, article_id: int, supplier_id: int, assembly_group_facets: Dict[str, Any] = None) -> None:
         """Process data for articles.csv with improved schema compliance"""
@@ -719,21 +685,193 @@ class TecdocClient:
         
         print(f"   DEBUG: Added {len(attributes_data)} attributes to CSV data")
     
+    def extract_references_from_article(self, article_id: int, article: Dict[str, Any]) -> None:
+        """Extract references directly from article data"""
+        total_references = 0
+        
+        # Extract OEM Numbers
+        if 'oemNumbers' in article and article['oemNumbers']:
+            oem_data = article['oemNumbers']
+            if isinstance(oem_data, dict) and 'array' in oem_data:
+                oem_data = oem_data['array']
+            if isinstance(oem_data, list):
+                for ref in oem_data:
+                    if isinstance(ref, str):
+                        reference_row = {
+                            'article_id': article_id,
+                            'ref_type': 'OE',
+                            'number': ref,
+                            'mfr_name': ''
+                        }
+                    else:
+                        reference_row = {
+                            'article_id': article_id,
+                            'ref_type': 'OE',
+                            'number': ref.get('articleNumber', ref.get('number', '')),
+                            'mfr_name': ref.get('mfrName', ref.get('brandName', ''))
+                        }
+                    self.csv_data['references'].append(reference_row)
+                    total_references += 1
+        
+        # Extract Trade Numbers
+        if 'tradeNumbers' in article and article['tradeNumbers']:
+            trade_data = article['tradeNumbers']
+            if isinstance(trade_data, dict) and 'array' in trade_data:
+                trade_data = trade_data['array']
+            if isinstance(trade_data, list):
+                for ref in trade_data:
+                    if isinstance(ref, str):
+                        reference_row = {
+                            'article_id': article_id,
+                            'ref_type': 'Trade',
+                            'number': ref,
+                            'mfr_name': ''
+                        }
+                    else:
+                        reference_row = {
+                            'article_id': article_id,
+                            'ref_type': 'Trade',
+                            'number': ref.get('articleNumber', ref.get('number', '')),
+                            'mfr_name': ref.get('mfrName', ref.get('brandName', ''))
+                        }
+                    self.csv_data['references'].append(reference_row)
+                    total_references += 1
+        
+        # Extract Comparable Numbers
+        if 'comparableNumbers' in article and article['comparableNumbers']:
+            comp_data = article['comparableNumbers']
+            if isinstance(comp_data, dict) and 'array' in comp_data:
+                comp_data = comp_data['array']
+            if isinstance(comp_data, list):
+                for ref in comp_data:
+                    if isinstance(ref, str):
+                        reference_row = {
+                            'article_id': article_id,
+                            'ref_type': 'Comparable',
+                            'number': ref,
+                            'mfr_name': ''
+                        }
+                    else:
+                        reference_row = {
+                            'article_id': article_id,
+                            'ref_type': 'Comparable',
+                            'number': ref.get('articleNumber', ref.get('number', '')),
+                            'mfr_name': ref.get('mfrName', ref.get('brandName', ''))
+                        }
+                    self.csv_data['references'].append(reference_row)
+                    total_references += 1
+        
+        # Extract Replaced By Articles
+        if 'replacedByArticles' in article and article['replacedByArticles']:
+            replaced_data = article['replacedByArticles']
+            if isinstance(replaced_data, dict) and 'array' in replaced_data:
+                replaced_data = replaced_data['array']
+            if isinstance(replaced_data, list):
+                for ref in replaced_data:
+                    if isinstance(ref, str):
+                        reference_row = {
+                            'article_id': article_id,
+                            'ref_type': 'Replaced',
+                            'number': ref,
+                            'mfr_name': ''
+                        }
+                    else:
+                        reference_row = {
+                            'article_id': article_id,
+                            'ref_type': 'Replaced',
+                            'number': ref.get('articleNumber', ref.get('number', '')),
+                            'mfr_name': ref.get('mfrName', ref.get('brandName', ''))
+                        }
+                    self.csv_data['references'].append(reference_row)
+                    total_references += 1
+        
+        # Extract Replaces Articles
+        if 'replacesArticles' in article and article['replacesArticles']:
+            replaces_data = article['replacesArticles']
+            if isinstance(replaces_data, dict) and 'array' in replaces_data:
+                replaces_data = replaces_data['array']
+            if isinstance(replaces_data, list):
+                for ref in replaces_data:
+                    if isinstance(ref, str):
+                        reference_row = {
+                            'article_id': article_id,
+                            'ref_type': 'Replacement',
+                            'number': ref,
+                            'mfr_name': ''
+                        }
+                    else:
+                        reference_row = {
+                            'article_id': article_id,
+                            'ref_type': 'Replacement',
+                            'number': ref.get('articleNumber', ref.get('number', '')),
+                            'mfr_name': ref.get('mfrName', ref.get('brandName', ''))
+                        }
+                    self.csv_data['references'].append(reference_row)
+                    total_references += 1
+        
+        # Extract GTINs/EANs
+        if 'GTINs' in article and article['GTINs']:
+            gtin_data = article['GTINs']
+            if isinstance(gtin_data, dict) and 'array' in gtin_data:
+                gtin_data = gtin_data['array']
+            if isinstance(gtin_data, list):
+                for ref in gtin_data:
+                    reference_row = {
+                        'article_id': article_id,
+                        'ref_type': 'EAN',
+                        'number': ref if isinstance(ref, str) else ref.get('gtin', ref.get('ean', '')),
+                        'mfr_name': ''
+                    }
+                    self.csv_data['references'].append(reference_row)
+                    total_references += 1
+        
+        if total_references > 0:
+            print(f"   Found {total_references} references")
+    
     def process_references_data(self, article_id: int, references_response: Dict[str, Any]) -> None:
         """Process data for references.csv"""
-        if not references_response or 'data' not in references_response:
+        print(f"   DEBUG: References response keys: {references_response.keys() if references_response else 'None'}")
+        
+        if not references_response:
+            print(f"   DEBUG: No references response received")
             return
         
-        references_data = references_response.get('data', {})
-        if 'array' in references_data:
-            for ref in references_data['array']:
-                reference_row = {
-                    'article_id': article_id,
-                    'ref_type': ref.get('referenceType', ''),
-                    'number': ref.get('number', ''),
-                    'mfr_name': ref.get('mfrName', '')
-                }
-                self.csv_data['references'].append(reference_row)
+        # Check for different possible response structures
+        references_data = None
+        
+        # Try direct array access
+        if 'array' in references_response:
+            references_data = references_response['array']
+            print(f"   DEBUG: Found direct array with {len(references_data)} items")
+        # Try data.array structure
+        elif 'data' in references_response:
+            data = references_response.get('data', {})
+            if 'array' in data:
+                references_data = data['array']
+                print(f"   DEBUG: Found data.array with {len(references_data)} items")
+            elif isinstance(data, list):
+                references_data = data
+                print(f"   DEBUG: Found data as list with {len(references_data)} items")
+        # Try if response is directly a list
+        elif isinstance(references_response, list):
+            references_data = references_response
+            print(f"   DEBUG: Response is a list with {len(references_data)} items")
+        
+        if not references_data:
+            print(f"   DEBUG: No references data found in response")
+            print(f"   DEBUG: Full response: {references_response}")
+            return
+        
+        for ref in references_data:
+            reference_row = {
+                'article_id': article_id,
+                'ref_type': ref.get('referenceType', ''),
+                'number': ref.get('number', ''),
+                'mfr_name': ref.get('mfrName', '')
+            }
+            self.csv_data['references'].append(reference_row)
+        
+        print(f"   DEBUG: Added {len(references_data)} references to CSV data")
     
     def process_vehicle_linkages(self, article_id: int) -> None:
         """Process vehicle linkages for vehicles.csv"""
@@ -925,6 +1063,39 @@ class TecdocClient:
             print(f"ERROR: Error creating attributes.csv: {e}")
             return ""
     
+    def export_references_csv(self, filename: str = None) -> str:
+        """Export references data to CSV file"""
+        if not filename:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"references_{timestamp}.csv"
+        
+        # Define references CSV schema according to client requirements
+        references_columns = [
+            'article_id', 'ref_type', 'number', 'mfr_name'
+        ]
+        
+        data = self.csv_data['references']
+        
+        if not data:
+            print("WARNING: No references data to export")
+            return ""
+        
+        try:
+            df = pd.DataFrame(data)
+            df = df.reindex(columns=references_columns, fill_value='')
+            
+            # Export with semicolon delimiter as per client requirements
+            df.to_csv(filename, index=False, encoding='utf-8', sep=';')
+            
+            print(f"SUCCESS: references.csv created: {len(data)} records")
+            print(f"File: {filename}")
+            
+            return filename
+            
+        except Exception as e:
+            print(f"ERROR: Error creating references.csv: {e}")
+            return ""
+    
     def export_to_csv(self, data: List[Dict[str, Any]], filename: str = None) -> str:
         """Export data to CSV"""
         if not filename:
@@ -1072,14 +1243,23 @@ def main():
     print(f"\nExporting to attributes.csv...")
     created_attributes_file = client.export_attributes_csv()
     
+    # Step 6: Export to references.csv
+    print(f"\nExporting to references.csv...")
+    created_references_file = client.export_references_csv()
+    
     if created_file:
         print(f"\n" + "="*50)
         print(f"Export completed successfully!")
         print(f"="*50)
         print(f"Created files:")
-        print(f"   1. {created_file}")
+        file_num = 1
+        print(f"   {file_num}. {created_file}")
+        file_num += 1
         if created_attributes_file:
-            print(f"   2. {created_attributes_file}")
+            print(f"   {file_num}. {created_attributes_file}")
+            file_num += 1
+        if created_references_file:
+            print(f"   {file_num}. {created_references_file}")
         
         # Show summary of articles data
         articles_data = client.csv_data['articles']
@@ -1106,6 +1286,21 @@ def main():
                 sample_attr = attributes_data[0]
                 print(f"   Sample attribute data:")
                 for key, value in sample_attr.items():
+                    if value:  # Only show fields with data
+                        display_value = str(value)[:100] + "..." if len(str(value)) > 100 else str(value)
+                        print(f"     {key}: {display_value}")
+        
+        # Show summary of references data
+        references_data = client.csv_data['references']
+        if references_data:
+            print(f"\nReferences Data Summary:")
+            print(f"   Total references: {len(references_data)}")
+            
+            # Show sample of what was extracted
+            if len(references_data) > 0:
+                sample_ref = references_data[0]
+                print(f"   Sample reference data:")
+                for key, value in sample_ref.items():
                     if value:  # Only show fields with data
                         display_value = str(value)[:100] + "..." if len(str(value)) > 100 else str(value)
                         print(f"     {key}: {display_value}")

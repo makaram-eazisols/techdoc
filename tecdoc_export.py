@@ -77,6 +77,9 @@ class TecdocClient:
                 "includePDFs": True,
                 "includeImages": True,
                 "includeLinks": True,
+                "includeArticleCriteria": True,
+                "includeAttributes": True,
+                "assemblies": True,
                 "assemblyGroupFacetOptions": {
                     "enabled": True,
                     "assemblyGroupType": "O",
@@ -176,20 +179,6 @@ class TecdocClient:
             print(f"   Response: {response}")
         
         return response
-    
-    def get_article_attributes(self, article_id: int) -> Dict[str, Any]:
-        """Get article attributes/criteria"""
-        payload = {
-            "getArticleCriteria": {
-                "articleCountry": DEFAULT_COUNTRY,
-                "articleId": article_id,
-                "lang": DEFAULT_LANGUAGE,
-                "provider": TECDOC_PROVIDER
-            }
-        }
-        
-        print(f"Getting attributes for article ID {article_id}...")
-        return self.make_request(payload)
     
     def get_article_references(self, article_id: int) -> Dict[str, Any]:
         """Get article references (OE numbers, etc.)"""
@@ -425,6 +414,11 @@ class TecdocClient:
         
         # Process articles.csv data only (focusing on articles.csv for now)
         self.process_articles_data(article, article_name, article_id, supplier_id, assembly_group_facets)
+        
+        # Check if attributes are included in the article data
+        if 'articleCriteria' in article or 'attributes' in article or 'criteria' in article:
+            print(f"   Found attributes in article data, processing...")
+            self.extract_attributes_from_article(article_id, article)
     
     def process_articles_data(self, article: Dict[str, Any], article_name: str, article_id: int, supplier_id: int, assembly_group_facets: Dict[str, Any] = None) -> None:
         """Process data for articles.csv with improved schema compliance"""
@@ -636,26 +630,94 @@ class TecdocClient:
                 url not in pdf_urls):
                 pdf_urls.append(url)
     
-    def process_attributes_data(self, article_id: int, attributes_response: Dict[str, Any]) -> None:
-        """Process data for attributes.csv"""
-        if not attributes_response or 'data' not in attributes_response:
+    def extract_attributes_from_article(self, article_id: int, article: Dict[str, Any]) -> None:
+        """Extract attributes directly from article data"""
+        attributes_data = None
+        
+        # Try different possible keys
+        if 'articleCriteria' in article:
+            attributes_data = article['articleCriteria']
+        elif 'attributes' in article:
+            attributes_data = article['attributes']
+        elif 'criteria' in article:
+            attributes_data = article['criteria']
+        
+        if not attributes_data:
             return
         
-        attributes_data = attributes_response.get('data', {})
-        if 'array' in attributes_data:
-            for attr in attributes_data['array']:
-                attribute_row = {
-                    'article_id': article_id,
-                    'criteria_id': attr.get('criteriaId', ''),
-                    'criteria_description': attr.get('criteriaDescription', ''),
-                    'criteria_abbr': attr.get('criteriaAbbr', ''),
-                    'value_raw': attr.get('valueRaw', ''),
-                    'value_formatted': attr.get('valueFormatted', ''),
-                    'unit': attr.get('unit', ''),
-                    'immediate_display': str(attr.get('immediateDisplay', False)).lower(),
-                    'is_interval': str(attr.get('isInterval', False)).lower()
-                }
-                self.csv_data['attributes'].append(attribute_row)
+        # If it's a dict with array, extract the array
+        if isinstance(attributes_data, dict) and 'array' in attributes_data:
+            attributes_data = attributes_data['array']
+        
+        if not isinstance(attributes_data, list):
+            return
+        
+        print(f"   Found {len(attributes_data)} attributes")
+        
+        for attr in attributes_data:
+            attribute_row = {
+                'article_id': article_id,
+                'criteria_id': attr.get('criteriaId', attr.get('id', '')),
+                'criteria_description': attr.get('criteriaDescription', attr.get('description', '')),
+                'criteria_abbr': attr.get('criteriaAbbrDescription', attr.get('criteriaAbbr', attr.get('abbr', ''))),
+                'value_raw': attr.get('rawValue', attr.get('valueRaw', attr.get('value', ''))),
+                'value_formatted': attr.get('formattedValue', attr.get('valueFormatted', attr.get('value', ''))),
+                'unit': attr.get('criteriaUnitDescription', attr.get('unit', '')),
+                'immediate_display': str(attr.get('immediateDisplay', False)).lower(),
+                'is_interval': str(attr.get('isInterval', False)).lower()
+            }
+            self.csv_data['attributes'].append(attribute_row)
+    
+    def process_attributes_data(self, article_id: int, attributes_response: Dict[str, Any]) -> None:
+        """Process data for attributes.csv"""
+        print(f"   DEBUG: Attributes response keys: {attributes_response.keys() if attributes_response else 'None'}")
+        
+        if not attributes_response:
+            print(f"   DEBUG: No attributes response received")
+            return
+        
+        # Check for different possible response structures
+        attributes_data = None
+        
+        # Try direct array access
+        if 'array' in attributes_response:
+            attributes_data = attributes_response['array']
+            print(f"   DEBUG: Found direct array with {len(attributes_data)} items")
+        # Try data.array structure
+        elif 'data' in attributes_response:
+            data = attributes_response.get('data', {})
+            if 'array' in data:
+                attributes_data = data['array']
+                print(f"   DEBUG: Found data.array with {len(attributes_data)} items")
+            elif isinstance(data, list):
+                attributes_data = data
+                print(f"   DEBUG: Found data as list with {len(attributes_data)} items")
+        # Try if response is directly a list
+        elif isinstance(attributes_response, list):
+            attributes_data = attributes_response
+            print(f"   DEBUG: Response is a list with {len(attributes_data)} items")
+        
+        if not attributes_data:
+            print(f"   DEBUG: No attributes data found in response")
+            print(f"   DEBUG: Full response: {attributes_response}")
+            return
+        
+        for attr in attributes_data:
+            print(f"   DEBUG: Processing attribute: {attr.keys() if isinstance(attr, dict) else attr}")
+            attribute_row = {
+                'article_id': article_id,
+                'criteria_id': attr.get('criteriaId', ''),
+                'criteria_description': attr.get('criteriaDescription', ''),
+                'criteria_abbr': attr.get('criteriaAbbr', ''),
+                'value_raw': attr.get('valueRaw', ''),
+                'value_formatted': attr.get('valueFormatted', ''),
+                'unit': attr.get('unit', ''),
+                'immediate_display': str(attr.get('immediateDisplay', False)).lower(),
+                'is_interval': str(attr.get('isInterval', False)).lower()
+            }
+            self.csv_data['attributes'].append(attribute_row)
+        
+        print(f"   DEBUG: Added {len(attributes_data)} attributes to CSV data")
     
     def process_references_data(self, article_id: int, references_response: Dict[str, Any]) -> None:
         """Process data for references.csv"""
@@ -829,6 +891,40 @@ class TecdocClient:
             print(f"ERROR: Error creating articles.csv: {e}")
             return ""
     
+    def export_attributes_csv(self, filename: str = None) -> str:
+        """Export attributes data to CSV file"""
+        if not filename:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"attributes_{timestamp}.csv"
+        
+        # Define attributes CSV schema according to client requirements
+        attributes_columns = [
+            'article_id', 'criteria_id', 'criteria_description', 'criteria_abbr',
+            'value_raw', 'value_formatted', 'unit', 'immediate_display', 'is_interval'
+        ]
+        
+        data = self.csv_data['attributes']
+        
+        if not data:
+            print("WARNING: No attributes data to export")
+            return ""
+        
+        try:
+            df = pd.DataFrame(data)
+            df = df.reindex(columns=attributes_columns, fill_value='')
+            
+            # Export with semicolon delimiter as per client requirements
+            df.to_csv(filename, index=False, encoding='utf-8', sep=';')
+            
+            print(f"SUCCESS: attributes.csv created: {len(data)} records")
+            print(f"File: {filename}")
+            
+            return filename
+            
+        except Exception as e:
+            print(f"ERROR: Error creating attributes.csv: {e}")
+            return ""
+    
     def export_to_csv(self, data: List[Dict[str, Any]], filename: str = None) -> str:
         """Export data to CSV"""
         if not filename:
@@ -972,9 +1068,18 @@ def main():
     print(f"\nExporting to articles.csv...")
     created_file = client.export_articles_csv()
     
+    # Step 5: Export to attributes.csv
+    print(f"\nExporting to attributes.csv...")
+    created_attributes_file = client.export_attributes_csv()
+    
     if created_file:
-        print(f"\nExport completed successfully!")
-        print(f"Created file: {created_file}")
+        print(f"\n" + "="*50)
+        print(f"Export completed successfully!")
+        print(f"="*50)
+        print(f"Created files:")
+        print(f"   1. {created_file}")
+        if created_attributes_file:
+            print(f"   2. {created_attributes_file}")
         
         # Show summary of articles data
         articles_data = client.csv_data['articles']
@@ -989,6 +1094,21 @@ def main():
                 if value:  # Only show fields with data
                     display_value = str(value)[:100] + "..." if len(str(value)) > 100 else str(value)
                     print(f"     {key}: {display_value}")
+        
+        # Show summary of attributes data
+        attributes_data = client.csv_data['attributes']
+        if attributes_data:
+            print(f"\nAttributes Data Summary:")
+            print(f"   Total attributes: {len(attributes_data)}")
+            
+            # Show sample of what was extracted
+            if len(attributes_data) > 0:
+                sample_attr = attributes_data[0]
+                print(f"   Sample attribute data:")
+                for key, value in sample_attr.items():
+                    if value:  # Only show fields with data
+                        display_value = str(value)[:100] + "..." if len(str(value)) > 100 else str(value)
+                        print(f"     {key}: {display_value}")
     else:
         print("ERROR: Export failed")
 
